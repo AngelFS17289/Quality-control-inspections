@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Service Visits</title>
+<style>
+:root{color-scheme:light dark;--bg:#eceae6;--fg:#1c1c1e;--card:#fff;--mut:#6a6a70;--bd:#cfcbc4;--ac:#b3202a;--on:#fff;--ok:#2d7a46;--warn:#b7791f}
+@media(prefers-color-scheme:dark){:root{--bg:#161616;--fg:#ececec;--card:#222;--mut:#9a9aa0;--bd:#3a3a3a;--ac:#e2555e;--on:#161616;--ok:#5fc07f;--warn:#e0a64a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.4 "Trebuchet MS",Verdana,sans-serif;-webkit-text-size-adjust:100%}
+button,input,select,textarea{font:inherit;color:inherit}
+button{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:10px 14px;min-height:44px}
+.bar{position:sticky;top:0;z-index:5;background:var(--ac);color:var(--on);padding:12px 14px;display:flex;gap:10px;align-items:center;justify-content:space-between}
+.bar h1{margin:0;font-size:1.15rem}
+.bar button{background:transparent;color:var(--on);border-color:var(--on)}
+.bar select{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:8px}
+.nav{display:flex;gap:8px;padding:10px 14px}
+.nav input{flex:1;min-width:0;padding:10px;border:1px solid var(--bd);border-radius:8px;background:var(--card)}
+main{padding:4px 14px 100px;max-width:720px;margin:0 auto}
+.card{display:flex;gap:12px;align-items:center;background:var(--card);border:1px solid var(--bd);border-left:6px solid var(--bd);border-radius:8px;padding:12px;margin:8px 0}
+.card .t{font-weight:700;min-width:62px}
+.card .i{flex:1;min-width:0}
+.card small{color:var(--mut)}
+.st{font-size:.8rem;padding:3px 8px;border-radius:12px;border:1px solid currentColor}
+.st.scheduled{color:var(--mut)}.st.progress{color:var(--warn)}.st.done{color:var(--ok)}
+.empty{color:var(--mut);text-align:center;padding:40px 0}
+.fab{position:fixed;left:14px;right:14px;bottom:14px;max-width:692px;margin:auto;background:var(--ac);color:var(--on);border:0;font-weight:700}
+section{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:14px;margin:12px 0}
+h2{margin:0 0 10px;font-size:1.05rem}
+.f{display:block;margin:8px 0}.f span{display:block;font-size:.85rem;color:var(--mut);margin-bottom:3px}
+.f input,.f textarea,#nt{width:100%;padding:10px;border:1px solid var(--bd);border-radius:8px;background:var(--bg)}
+.row{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-top:6px}
+.links a{color:var(--ac);margin-right:14px}
+.note{font-size:.85rem;color:var(--mut);margin:6px 0}
+.ck{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--bd)}
+.ck b{font-weight:400;flex:1}
+.seg input{position:absolute;opacity:0}
+.seg span{display:inline-block;padding:9px 11px;border:1px solid var(--bd);margin-left:-1px;min-width:44px;text-align:center}
+.seg:first-of-type span{border-radius:8px 0 0 8px}.seg:last-of-type span{border-radius:0 8px 8px 0}
+.seg input:checked+span{background:var(--ac);color:var(--on);border-color:var(--ac)}
+.log{border-top:1px solid var(--bd);padding:8px 0}.log small{color:var(--mut)}
+canvas{width:100%;height:150px;border:1px dashed var(--mut);border-radius:8px;background:#fff;touch-action:none;display:block}
+.ph{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-top:10px}
+.ph img{width:100%;height:110px;object-fit:cover;border-radius:6px}
+.ph input{width:100%;padding:6px;border:1px solid var(--bd);border-radius:6px;background:var(--bg)}
+.ov{position:fixed;inset:0;background:rgba(0,0,0,.9);display:flex;align-items:center;justify-content:center;z-index:20}
+.ov img{max-width:100%;max-height:100%}
+.danger{color:var(--ac);border-color:var(--ac)}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+const $=(s)=>document.querySelector(s),app=$('#app');
+let db=null,mem={},day,cur=null,tm;
+const z=n=>String(n).padStart(2,'0');
+const ymd=d=>d.getFullYear()+'-'+z(d.getMonth()+1)+'-'+z(d.getDate());
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmt=i=>new Date(i).toLocaleString([], {dateStyle:'medium',timeStyle:'short'});
+const ST={scheduled:'Scheduled',progress:'In progress',done:'Completed'};
+const CK=[['cov','Covered under Terms & Conditions'],['war','Under 2-year installation Warranty'],['mfr','Manufacturer’s Warranty'],['lab','Quote for additional labor'],['new','Material unrepairable, needs new floor']];
+
+/* storage: IndexedDB, falls back to memory if unavailable */
+function openDB(){return new Promise(r=>{try{const q=indexedDB.open('svc',1);q.onupgradeneeded=()=>q.result.createObjectStore('v',{keyPath:'id'});q.onsuccess=()=>{db=q.result;r()};q.onerror=()=>r()}catch(e){r()}})}
+function all(){return new Promise(r=>{if(!db)return r(Object.values(mem));const q=db.transaction('v').objectStore('v').getAll();q.onsuccess=()=>r(q.result);q.onerror=()=>r([])})}
+function put(v){return new Promise(r=>{mem[v.id]=v;if(!db)return r();const t=db.transaction('v','readwrite');t.objectStore('v').put(v);t.oncomplete=()=>r();t.onerror=()=>r()})}
+function rm(id){return new Promise(r=>{delete mem[id];if(!db)return r();const t=db.transaction('v','readwrite');t.objectStore('v').delete(id);t.oncomplete=()=>r();t.onerror=()=>r()})}
+const save=()=>{clearTimeout(tm);tm=setTimeout(()=>put(cur),300)};
+
+/* day view */
+const card=v=>`<div class="card" data-act="open" data-id="${v.id}" style="border-left-color:var(--${v.status==='done'?'ok':v.status==='progress'?'warn':'bd'})"><div class="t">${esc(v.time||'No time')}</div><div class="i"><b>${esc(v.name||'Unnamed customer')}</b><br><small>${esc([v.address,v.city].filter(Boolean).join(', '))}</small><br><small>${esc(v.service||'')}</small></div><span class="st ${v.status}">${ST[v.status]}</span></div>`;
+async function showDay(){
+  cur=null;
+  const vs=(await all()).filter(v=>v.date===day).sort((a,b)=>(a.time||'99').localeCompare(b.time||'99'));
+  const dt=new Date(day+'T00:00');
+  app.innerHTML=`<div class="bar"><h1>${dt.toLocaleDateString([], {weekday:'long',month:'long',day:'numeric'})}</h1></div>
+  <div class="nav"><button data-act="prev">‹</button><input type="date" id="dp" value="${day}"><button data-act="next">›</button><button data-act="today">Today</button></div>
+  <main>${vs.length?vs.map(card).join(''):'<p class="empty">No appointments this day. Add one below.</p>'}</main>
+  <button class="fab" data-act="new">Add appointment</button>`;
+  scrollTo(0,0);
+}
+
+/* visit view */
+const F=(k,l,type='text')=>`<label class="f"><span>${l}</span><input type="${type}" data-k="${k}" value="${esc(cur[k])}"></label>`;
+const T=(k,l,rows)=>`<label class="f"><span>${l}</span><textarea rows="${rows}" data-k="${k}">${esc(cur[k])}</textarea></label>`;
+const SIG=(k,title,note)=>`<section><h2>${title}</h2><p class="note">${note}</p><canvas id="c_${k}"></canvas><div class="row"><small id="s_${k}">${cur[k]?'Signed '+fmt(cur[k].at):'Not signed yet'}</small><button data-act="clr" data-sig="${k}">Clear signature</button></div></section>`;
+function renderVisit(){
+  const y=scrollY,v=cur;
+  app.innerHTML=`<div class="bar"><button data-act="back">‹ Day</button>
+  <select data-k="status">${Object.keys(ST).map(s=>`<option value="${s}" ${v.status===s?'selected':''}>${ST[s]}</option>`).join('')}</select></div>
+  <main>
+  <section><h2>${esc(v.name||'Unnamed customer')}</h2>
+  <div><b>${new Date((v.date||day)+'T00:00').toLocaleDateString([], {weekday:'short',month:'short',day:'numeric'})}${v.time?' at '+esc(v.time):''}</b></div>
+  ${[v.address,v.city,v.zip].some(Boolean)?`<div>${esc([v.address,v.city,v.zip].filter(Boolean).join(', '))}</div>`:''}
+  ${v.phone?`<div>${esc(v.phone)}</div>`:''}
+  ${v.order?`<div class="note">Order ${esc(v.order)}</div>`:''}
+  ${v.service?`<div class="note">${esc(v.service)}</div>`:''}
+  <div class="links" style="margin-top:8px">${v.address?`<a href="https://maps.google.com/?q=${encodeURIComponent([v.address,v.city,v.zip].filter(Boolean).join(' '))}" target="_blank">Open in Maps</a>`:''}${v.phone?`<a href="tel:${esc(v.phone)}">Call customer</a>`:''}</div>
+  <div class="row"><span></span><button data-act="editsched">Edit appointment</button></div></section>
+
+  <section><h2>Customer interactions</h2>
+  <textarea id="nt" rows="3" placeholder="What was discussed or done?"></textarea>
+  <div class="row"><span></span><button data-act="addnote">Add to log</button></div>
+  ${v.notes.map((n,i)=>`<div class="log"><small>${fmt(n.at)} · <a href="#" data-act="delnote" data-i="${i}" style="color:var(--ac)">Delete</a></small><div>${esc(n.text).replace(/\n/g,'<br>')}</div></div>`).join('')}</section>
+
+  <section><h2>Inspection</h2>
+  ${F('idate','Installation Date','date')}${T('inspection','Inspection report',5)}${T('material','Material needed (if applicable)',3)}
+  <div style="margin-top:8px">${CK.map(([k,l])=>`<div class="ck"><b>${l}</b><span style="white-space:nowrap">${['Yes','No','N/A'].map(o=>`<label class="seg"><input type="radio" name="ck_${k}" value="${o}" ${v.checks[k]===o?'checked':''}><span>${o}</span></label>`).join('')}</span></div>`).join('')}</div>
+  <p class="note"><b>NOTE:</b> All expenses required for additional material and/or labor services <u>Not covered</u> under the 2-year Installations Warranty or Manufacturer Warranty will be covered under <u>Customer’s responsibility</u>. Additional invoices need to paid upfront on a separate order not related to the original. Floor Source AZ reserves the right to approve or deny any further repair services. Additional services are subject to material availability. In the events of materials not being available or discontinued Floor Source AZ does not assume the responsibility to provide materials.</p></section>
+
+  <section><h2>Photos</h2>
+  <label><span class="btn" style="display:inline-block;background:var(--ac);color:var(--on);padding:11px 14px;border-radius:8px">Take or add photos</span>
+  <input type="file" id="ph" accept="image/*" capture="environment" multiple hidden></label>
+  <div class="ph">${v.photos.map((p,i)=>`<div><img src="${p.img}" data-act="viewph" data-i="${i}"><input placeholder="Caption" data-cap="${i}" value="${esc(p.cap)}"><a href="#" data-act="delph" data-i="${i}" style="color:var(--ac);font-size:.85rem">Remove</a></div>`).join('')}</div></section>
+
+  ${SIG('sig1','Inspection/walkthrough: customer’s agreement','Signing this portion is considered an agreement with the inspection assessment provided by Floor Source AZ.')}
+  ${SIG('sig2','Job completion verification: customer’s agreement','Signing this portion is considered confirmation that all services have been completed at your satisfaction.')}
+
+  <section><div class="row"><button data-act="report">Download visit report</button><button class="danger" data-act="delvisit">Delete visit</button></div></section>
+  </main>`;
+  pad('sig1');pad('sig2');scrollTo(0,y);
+}
+
+/* scheduling step */
+let isNew=false;
+function renderSched(){
+  app.innerHTML=`<div class="bar"><button data-act="schedback">‹ Back</button><h1>${isNew?'New appointment':'Edit appointment'}</h1></div>
+  <main><section>
+  <div class="row"><div style="flex:1">${F('date','Date','date')}</div><div style="flex:1">${F('time','Time','time')}</div></div>
+  ${F('name','Customer name')}${F('phone','Phone #','tel')}${F('address','Address')}${F('city','City/State')}${F('zip','Zip/Postal Code')}${F('order','OG Order Number')}${F('service','Type of service required')}
+  </section></main>
+  <button class="fab" data-act="savesched">Save appointment</button>`;
+  scrollTo(0,0);
+}
+
+/* signature pad */
+function pad(k){
+  const c=$('#c_'+k),r=c.getBoundingClientRect(),d=devicePixelRatio||1;
+  c.width=r.width*d;c.height=r.height*d;
+  const x=c.getContext('2d');x.scale(d,d);x.fillStyle='#fff';x.fillRect(0,0,r.width,r.height);
+  x.lineWidth=2.5;x.lineCap='round';x.lineJoin='round';x.strokeStyle='#111';
+  if(cur[k]){const i=new Image();i.onload=()=>x.drawImage(i,0,0,r.width,r.height);i.src=cur[k].img}
+  let on=false;
+  const pt=e=>{const b=c.getBoundingClientRect();return[e.clientX-b.left,e.clientY-b.top]};
+  c.onpointerdown=e=>{on=true;c.setPointerCapture(e.pointerId);const[a,b]=pt(e);x.beginPath();x.moveTo(a,b);x.lineTo(a+.1,b+.1);x.stroke();e.preventDefault()};
+  c.onpointermove=e=>{if(!on)return;const[a,b]=pt(e);x.lineTo(a,b);x.stroke()};
+  c.onpointerup=c.onpointercancel=()=>{if(!on)return;on=false;cur[k]={img:c.toDataURL('image/png'),at:new Date().toISOString()};save();$('#s_'+k).textContent='Signed '+fmt(cur[k].at)};
+}
+
+/* photos: shrink before storing */
+function shrink(f){return new Promise(r=>{const i=new Image(),u=URL.createObjectURL(f);i.onload=()=>{const s=Math.min(1,1280/Math.max(i.width,i.height)),c=document.createElement('canvas');c.width=i.width*s;c.height=i.height*s;c.getContext('2d').drawImage(i,0,0,c.width,c.height);URL.revokeObjectURL(u);r(c.toDataURL('image/jpeg',.7))};i.onerror=()=>r(null);i.src=u})}
+
+/* report download */
+async function report(){
+  const v=cur,row=(a,b)=>`<tr><td><b>${a}</b></td><td>${esc(b||'—')}</td></tr>`;
+  const sig=(k,l)=>`<h3>${l}</h3>${v[k]?`<img src="${v[k].img}" style="max-width:320px;border:1px solid #999"><br>Signed ${fmt(v[k].at)}`:'Not signed'}`;
+  const h=`<!DOCTYPE html><meta charset="utf-8"><title>Visit report</title><style>body{font:14px sans-serif;max-width:760px;margin:20px auto;padding:0 12px}table{border-collapse:collapse;width:100%;margin:10px 0}td{border:1px solid #999;padding:6px;vertical-align:top}img{max-width:100%}</style>
+  <h1>Installation Walkthrough, Warranty, Claim</h1>
+  <table>${row('Visit date / time',v.date+' '+(v.time||''))}${row('OG Order Number',v.order)}${row('Installation Date',v.idate)}${row('Customer name',v.name)}${row('Address',v.address)}${row('City/State',v.city)}${row('Zip/Postal Code',v.zip)}${row('Phone #',v.phone)}${row('Type of service required',v.service)}</table>
+  <h3>Inspection report</h3><p>${esc(v.inspection).replace(/\n/g,'<br>')||'—'}</p>
+  <h3>Material needed</h3><p>${esc(v.material).replace(/\n/g,'<br>')||'—'}</p>
+  <table>${CK.map(([k,l])=>row(l,v.checks[k])).join('')}</table>
+  <h3>Customer interactions</h3>${v.notes.length?v.notes.slice().reverse().map(n=>`<p><small>${fmt(n.at)}</small><br>${esc(n.text).replace(/\n/g,'<br>')}</p>`).join(''):'<p>—</p>'}
+  ${sig('sig1','Inspection/walkthrough: customer’s agreement')}${sig('sig2','Job completion verification: customer’s agreement')}
+  <h3>Photos</h3>${v.photos.map(p=>`<p><img src="${p.img}"><br>${esc(p.cap)}</p>`).join('')||'<p>—</p>'}`;
+  const fn='visit-'+String(v.order||v.name||v.id).replace(/\W+/g,'_')+'.html';
+  let dl=null;try{dl=typeof claude!=='undefined'?await claude.use('downloads'):null}catch(e){}
+  if(dl){try{await dl.save({filename:fn,data:h})}catch(e){if(e&&e.code!=='declined')alert('The report could not be saved.')}return}
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([h],{type:'text/html'}));
+  a.download=fn;document.body.appendChild(a);a.click();a.remove();
+}
+
+/* events */
+app.onclick=async e=>{
+  const el=e.target.closest('[data-act]');if(!el)return;
+  const a=el.dataset.act,i=+el.dataset.i;
+  if(a==='prev'||a==='next'){const d=new Date(day+'T00:00');d.setDate(d.getDate()+(a==='next'?1:-1));day=ymd(d);showDay()}
+  else if(a==='today'){day=ymd(new Date());showDay()}
+  else if(a==='new'){cur={id:Date.now().toString(36),date:day,time:'',status:'scheduled',checks:{},notes:[],photos:[]};isNew=true;renderSched()}
+  else if(a==='editsched'){isNew=false;renderSched()}
+  else if(a==='savesched'){if(!(cur.name||'').trim()){alert('Enter the customer name.');return}clearTimeout(tm);await put(cur);if(isNew){isNew=false;day=cur.date||day;showDay()}else renderVisit()}
+  else if(a==='schedback'){clearTimeout(tm);if(isNew){await rm(cur.id);isNew=false;showDay()}else{await put(cur);renderVisit()}}
+  else if(a==='open'){cur=(await all()).find(v=>v.id===el.dataset.id);renderVisit()}
+  else if(a==='back'){clearTimeout(tm);await put(cur);day=cur.date||day;showDay()}
+  else if(a==='addnote'){const t=$('#nt').value.trim();if(t){cur.notes.unshift({at:new Date().toISOString(),text:t});save();renderVisit()}}
+  else if(a==='delnote'){e.preventDefault();cur.notes.splice(i,1);save();renderVisit()}
+  else if(a==='delph'){e.preventDefault();cur.photos.splice(i,1);save();renderVisit()}
+  else if(a==='viewph'){app.insertAdjacentHTML('beforeend',`<div class="ov" data-act="closeov"><img src="${cur.photos[i].img}"></div>`)}
+  else if(a==='closeov'){el.remove()}
+  else if(a==='clr'){cur[el.dataset.sig]=null;save();renderVisit()}
+  else if(a==='report'){report()}
+  else if(a==='delvisit'){if(confirm('Delete this visit, including its photos and signatures?')){await rm(cur.id);day=cur.date||day;showDay()}}
+};
+app.oninput=e=>{const t=e.target;if(!cur)return;
+  if(t.dataset.k){cur[t.dataset.k]=t.value;save()}
+  else if(t.dataset.cap!=null){cur.photos[t.dataset.cap].cap=t.value;save()}};
+app.onchange=async e=>{const t=e.target;
+  if(t.id==='dp'){day=t.value||day;showDay()}
+  else if(t.name&&t.name.indexOf('ck_')===0){cur.checks[t.name.slice(3)]=t.value;save()}
+  else if(t.id==='ph'){for(const f of Array.from(t.files)){const img=await shrink(f);if(img)cur.photos.push({img,at:new Date().toISOString(),cap:''})}save();renderVisit()}};
+
+day=ymd(new Date());
+openDB().then(showDay);
+</script>
+</body>
+</html>
